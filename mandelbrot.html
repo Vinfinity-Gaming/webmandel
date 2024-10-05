@@ -60,12 +60,17 @@
     <input type="range" id="colorSpeed" min="1" max="20" value="5">
     <span id="colorSpeedValue">5</span>
   </label>
+  <label>
+    Mandelbrot Power:
+    <input type="range" id="mandelbrotPower" min="2" max="10" value="2">
+    <span id="mandelbrotPowerValue">2</span>
+  </label>
 </div>
 <div id="qualityControl">
   <label>
     Render Quality:
-    <input type="range" id="renderQuality" min="1" max="5" value="5">
-    <span id="renderQualityValue">5</span>
+    <input type="range" id="renderQuality" min="1" max="5" value="3">
+    <span id="renderQualityValue">3</span>
   </label>
 </div>
 <div id="info">
@@ -85,10 +90,15 @@
   let cycleOffset = 0;
   let colorSpeed = parseInt(document.getElementById('colorSpeed').value);
   let renderQuality = parseInt(document.getElementById('renderQuality').value);
+  let mandelbrotPower = parseFloat(document.getElementById('mandelbrotPower').value);
   let customColors = [];
   let dragging = false;
   let dragStartX, dragStartY;
   let zoomLevel = 1;
+  let renderTimeout;
+
+  const offscreenCanvas = document.createElement('canvas');
+  const offscreenCtx = offscreenCanvas.getContext('2d');
 
   function resizeCanvas() {
     width = window.innerWidth;
@@ -96,24 +106,24 @@
     canvas.width = width;
     canvas.height = height;
 
-    // Adjust aspect ratio
+    offscreenCanvas.width = width;
+    offscreenCanvas.height = height;
+
     const ratio = (maxX - minX) / (maxY - minY);
     const canvasRatio = width / height;
     if (canvasRatio > ratio) {
-      // Adjust X bounds
       const midX = (minX + maxX) / 2;
       const newWidth = (maxY - minY) * canvasRatio;
       minX = midX - newWidth / 2;
       maxX = midX + newWidth / 2;
     } else {
-      // Adjust Y bounds
       const midY = (minY + maxY) / 2;
       const newHeight = (maxX - minX) / canvasRatio;
       minY = midY - newHeight / 2;
       maxY = midY + newHeight / 2;
     }
 
-    drawMandelbrot();
+    drawMandelbrot();  // Full render after resizing
   }
 
   function parseCustomColors(input) {
@@ -154,7 +164,6 @@
   }
 
   function hexToRgb(hex) {
-    // Expand shorthand form (e.g. "03F") to full form (e.g. "0033FF")
     const shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
     hex = hex.replace(shorthandRegex, function(m, r, g, b) {
       return r + r + g + g + b + b;
@@ -167,29 +176,40 @@
     } : null;
   }
 
-  function drawMandelbrot() {
-    const imageData = ctx.createImageData(width, height);
+  function complexPow(re, im, power) {
+    const modulus = Math.sqrt(re * re + im * im);
+    const arg = Math.atan2(im, re);
+    const modulusPower = Math.pow(modulus, power);
+    const newRe = modulusPower * Math.cos(arg * power);
+    const newIm = modulusPower * Math.sin(arg * power);
+    return [newRe, newIm];
+  }
+
+  function drawMandelbrot(isLowRes = false) {
+    const ctxToUse = isLowRes ? offscreenCtx : ctx;
+    const imageData = ctxToUse.createImageData(width, height);
     const data = imageData.data;
     const dx = (maxX - minX) / width;
     const dy = (maxY - minY) / height;
-    const step = Math.ceil(6 - renderQuality); // From 5 (best quality) to 1 (lowest quality)
-    let offset = 0;
+    const step = isLowRes ? 10 : Math.ceil(6 - renderQuality);
 
     for (let py = 0; py < height; py += step) {
       const y0 = maxY - py * dy;
       for (let px = 0; px < width; px += step) {
         const x0 = minX + px * dx;
-        let x = 0, y = 0, iter = 0;
-        let xSq = 0, ySq = 0;
-        while (xSq + ySq <= 4 && iter < maxIter) {
-          y = 2 * x * y + y0;
-          x = xSq - ySq + x0;
-          xSq = x * x;
-          ySq = y * y;
+        let re = 0, im = 0, iter = 0;
+        let reSq = 0, imSq = 0;
+
+        while (reSq + imSq <= 4 && iter < maxIter) {
+          const [newRe, newIm] = complexPow(re, im, mandelbrotPower);
+          re = newRe + x0;
+          im = newIm + y0;
+          reSq = re * re;
+          imSq = im * im;
           iter++;
         }
-        const [r, g, b] = getColor(iter, xSq + ySq);
-        // Fill a block of pixels according to the step size
+
+        const [r, g, b] = getColor(iter, reSq + imSq);
         for (let iy = 0; iy < step; iy++) {
           for (let ix = 0; ix < step; ix++) {
             const idx = 4 * ((py + iy) * width + (px + ix));
@@ -203,7 +223,10 @@
         }
       }
     }
-    ctx.putImageData(imageData, 0, 0);
+    ctxToUse.putImageData(imageData, 0, 0);
+    if (isLowRes) {
+      ctx.drawImage(offscreenCanvas, 0, 0);  // Draw low-res buffer to screen
+    }
     updateInfo();
   }
 
@@ -215,6 +238,7 @@
     const y = event.clientY - rect.top;
     const x0 = minX + (maxX - minX) * x / width;
     const y0 = maxY - (maxY - minY) * y / height;
+
     const newWidth = (maxX - minX) * zoomFactor;
     const newHeight = (maxY - minY) * zoomFactor;
     minX = x0 - newWidth * (x / width);
@@ -222,7 +246,12 @@
     minY = y0 - newHeight * (1 - y / height);
     maxY = y0 + newHeight * (y / height);
     zoomLevel *= 1 / zoomFactor;
-    drawMandelbrot();
+
+    drawMandelbrot(true);  // Low-res rendering during zoom
+    clearTimeout(renderTimeout);
+    renderTimeout = setTimeout(() => {
+      drawMandelbrot();  // Full-res render after zoom ends
+    }, 150);  // Adjust delay to control the frequency of full renders
   }
 
   function panStart(event) {
@@ -242,8 +271,12 @@
     maxY += dy;
     dragStartX = event.clientX;
     dragStartY = event.clientY;
-    drawMandelbrot();
-    event.preventDefault();
+
+    drawMandelbrot(true);  // Low-res rendering during pan
+    clearTimeout(renderTimeout);
+    renderTimeout = setTimeout(() => {
+      drawMandelbrot();  // Full-res render after pan ends
+    }, 150);
   }
 
   function panEnd(event) {
@@ -315,6 +348,12 @@
   document.getElementById('renderQuality').addEventListener('input', (e) => {
     renderQuality = parseInt(e.target.value);
     document.getElementById('renderQualityValue').textContent = renderQuality;
+    drawMandelbrot();
+  });
+
+  document.getElementById('mandelbrotPower').addEventListener('input', (e) => {
+    mandelbrotPower = parseFloat(e.target.value);
+    document.getElementById('mandelbrotPowerValue').textContent = mandelbrotPower;
     drawMandelbrot();
   });
 
