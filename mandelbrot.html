@@ -1,333 +1,218 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>Mandelbrot Explorer</title>
-<style>
-  body { margin: 0; overflow: hidden; background: #000; color: #fff; font-family: Arial, sans-serif; }
-  #controls, #qualityControl {
-    position: absolute; top: 10px;
-    background: rgba(0, 0, 0, 0.7); padding: 15px; border-radius: 8px;
-  }
-  #controls {
-    left: 10px;
-  }
-  #qualityControl {
-    right: 10px;
-  }
-  #controls label, #qualityControl label { display: block; margin-bottom: 8px; }
-  #controls input[type="range"], #qualityControl input[type="range"] { width: 150px; }
-  #controls select, #controls input, #qualityControl input { margin-left: 5px; }
-  #info {
-    position: absolute; bottom: 10px; left: 10px; color: #fff;
-    background: rgba(0, 0, 0, 0.7); padding: 10px; border-radius: 8px;
-    font-size: 14px;
-  }
-  #customPaletteInput {
-    display: none;
-  }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mandelbrot Explorer (WebGL)</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+        #canvas {
+            width: 100%;
+            height: 100%;
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-family: Arial, sans-serif;
+            background-color: rgba(0, 0, 0, 0.5);
+            padding: 10px;
+            border-radius: 5px;
+        }
+    </style>
 </head>
 <body>
-<canvas id="canvas"></canvas>
-<div id="controls">
-  <label>
-    Color Palette:
-    <select id="palette">
-      <option value="rainbow">Rainbow</option>
-      <option value="grayscale">Grayscale</option>
-      <option value="fire">Fire</option>
-      <option value="custom">Custom</option>
-    </select>
-  </label>
-  <label id="customPaletteInput">
-    Custom Colors (comma-separated hex values):
-    <input type="text" id="customColors" placeholder="#ff0000,#00ff00,#0000ff">
-  </label>
-  <label>
-    <input type="checkbox" id="smoothColor"> Smooth Coloring
-  </label>
-  <label>
-    <input type="checkbox" id="colorCycle"> Color Cycling
-  </label>
-  <label>
-    Max Iterations:
-    <input type="range" id="maxIter" min="50" max="2000" value="500">
-    <span id="maxIterValue">500</span>
-  </label>
-  <label>
-    Color Speed:
-    <input type="range" id="colorSpeed" min="1" max="20" value="5">
-    <span id="colorSpeedValue">5</span>
-  </label>
-</div>
-<div id="qualityControl">
-  <label>
-    Render Quality:
-    <input type="range" id="renderQuality" min="1" max="5" value="5">
-    <span id="renderQualityValue">5</span>
-  </label>
-</div>
-<div id="info">
-  <div id="coords">Coords: (0, 0)</div>
-  <div id="zoomLevel">Zoom Level: 1x</div>
-</div>
-<script>
-(function() {
-  const canvas = document.getElementById('canvas');
-  const ctx = canvas.getContext('2d');
-  let width, height;
-  let minX = -2.5, maxX = 1, minY = -1.5, maxY = 1.5;
-  let maxIter = parseInt(document.getElementById('maxIter').value);
-  let palette = 'rainbow';
-  let smoothColoring = false;
-  let colorCycle = false;
-  let cycleOffset = 0;
-  let colorSpeed = parseInt(document.getElementById('colorSpeed').value);
-  let renderQuality = parseInt(document.getElementById('renderQuality').value);
-  let customColors = [];
-  let dragging = false;
-  let dragStartX, dragStartY;
-  let zoomLevel = 1;
+    <canvas id="canvas"></canvas>
+    <div id="info">
+        Use mouse wheel to zoom in/out<br>
+        Click and drag to pan<br>
+        Press 'R' to reset view
+    </div>
 
-  function resizeCanvas() {
-    width = window.innerWidth;
-    height = window.innerHeight;
-    canvas.width = width;
-    canvas.height = height;
-
-    // Adjust aspect ratio
-    const ratio = (maxX - minX) / (maxY - minY);
-    const canvasRatio = width / height;
-    if (canvasRatio > ratio) {
-      // Adjust X bounds
-      const midX = (minX + maxX) / 2;
-      const newWidth = (maxY - minY) * canvasRatio;
-      minX = midX - newWidth / 2;
-      maxX = midX + newWidth / 2;
-    } else {
-      // Adjust Y bounds
-      const midY = (minY + maxY) / 2;
-      const newHeight = (maxX - minX) / canvasRatio;
-      minY = midY - newHeight / 2;
-      maxY = midY + newHeight / 2;
-    }
-
-    drawMandelbrot();
-  }
-
-  function parseCustomColors(input) {
-    return input.split(',').map(color => {
-      color = color.trim();
-      if (color[0] !== '#') color = '#' + color;
-      return color;
-    });
-  }
-
-  function getColor(iter, z) {
-    if (iter === maxIter) return [0, 0, 0];
-    let mu = iter;
-    if (smoothColoring) {
-      mu = iter + 1 - Math.log(Math.log(z)) / Math.log(2);
-    }
-    mu = (mu + cycleOffset) % maxIter;
-    const t = mu / maxIter;
-    switch (palette) {
-      case 'grayscale':
-        const gray = t * 255;
-        return [gray, gray, gray];
-      case 'fire':
-        return [Math.min(255, t * 512), Math.min(255, t * 128), 0];
-      case 'custom':
-        if (customColors.length === 0) return [0, 0, 0];
-        const colorIndex = Math.floor(t * customColors.length);
-        const color = customColors[colorIndex % customColors.length];
-        const rgb = hexToRgb(color);
-        return [rgb.r, rgb.g, rgb.b];
-      default: // rainbow
-        return [
-          128 + 127 * Math.sin(2 * Math.PI * t),
-          128 + 127 * Math.sin(2 * Math.PI * t + 2 * Math.PI / 3),
-          128 + 127 * Math.sin(2 * Math.PI * t + 4 * Math.PI / 3)
-        ];
-    }
-  }
-
-  function hexToRgb(hex) {
-    // Expand shorthand form (e.g. "03F") to full form (e.g. "0033FF")
-    const shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
-    hex = hex.replace(shorthandRegex, function(m, r, g, b) {
-      return r + r + g + g + b + b;
-    });
-    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-    return result ? {
-      r: parseInt(result[1], 16),
-      g: parseInt(result[2], 16),
-      b: parseInt(result[3], 16)
-    } : null;
-  }
-
-  function drawMandelbrot() {
-    const imageData = ctx.createImageData(width, height);
-    const data = imageData.data;
-    const dx = (maxX - minX) / width;
-    const dy = (maxY - minY) / height;
-    const step = Math.ceil(6 - renderQuality); // From 5 (best quality) to 1 (lowest quality)
-    let offset = 0;
-
-    for (let py = 0; py < height; py += step) {
-      const y0 = maxY - py * dy;
-      for (let px = 0; px < width; px += step) {
-        const x0 = minX + px * dx;
-        let x = 0, y = 0, iter = 0;
-        let xSq = 0, ySq = 0;
-        while (xSq + ySq <= 4 && iter < maxIter) {
-          y = 2 * x * y + y0;
-          x = xSq - ySq + x0;
-          xSq = x * x;
-          ySq = y * y;
-          iter++;
+    <script id="vertexShader" type="x-shader/x-vertex">
+        attribute vec2 a_position;
+        void main() {
+            gl_Position = vec4(a_position, 0.0, 1.0);
         }
-        const [r, g, b] = getColor(iter, xSq + ySq);
-        // Fill a block of pixels according to the step size
-        for (let iy = 0; iy < step; iy++) {
-          for (let ix = 0; ix < step; ix++) {
-            const idx = 4 * ((py + iy) * width + (px + ix));
-            if (idx < data.length) {
-              data[idx] = r;
-              data[idx + 1] = g;
-              data[idx + 2] = b;
-              data[idx + 3] = 255;
+    </script>
+
+    <script id="fragmentShader" type="x-shader/x-fragment">
+        precision highp float;
+        uniform vec2 u_resolution;
+        uniform vec2 u_offset;
+        uniform float u_zoom;
+
+        vec2 squareImaginary(vec2 number) {
+            return vec2(
+                number.x * number.x - number.y * number.y,
+                2.0 * number.x * number.y
+            );
+        }
+
+        vec3 hsv2rgb(vec3 c) {
+            vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+            vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+            return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+        }
+
+        void main() {
+            vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution) / min(u_resolution.y, u_resolution.x);
+            vec2 c = uv * u_zoom + u_offset;
+            vec2 z = vec2(0.0);
+            float iter = 0.0;
+            const float MAX_ITER = 1000.0;
+            
+            for (float i = 0.0; i < MAX_ITER; i++) {
+                z = squareImaginary(z) + c;
+                if (dot(z, z) > 4.0) break;
+                iter++;
             }
-          }
+
+            if (iter == MAX_ITER) {
+                gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+            } else {
+                float hue = iter / MAX_ITER;
+                vec3 color = hsv2rgb(vec3(hue, 1.0, 1.0));
+                gl_FragColor = vec4(color, 1.0);
+            }
         }
-      }
-    }
-    ctx.putImageData(imageData, 0, 0);
-    updateInfo();
-  }
+    </script>
 
-  function zoom(event) {
-    event.preventDefault();
-    const zoomFactor = event.deltaY < 0 ? 0.9 : 1.1;
-    const rect = canvas.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    const x0 = minX + (maxX - minX) * x / width;
-    const y0 = maxY - (maxY - minY) * y / height;
-    const newWidth = (maxX - minX) * zoomFactor;
-    const newHeight = (maxY - minY) * zoomFactor;
-    minX = x0 - newWidth * (x / width);
-    maxX = x0 + newWidth * (1 - x / width);
-    minY = y0 - newHeight * (1 - y / height);
-    maxY = y0 + newHeight * (y / height);
-    zoomLevel *= 1 / zoomFactor;
-    drawMandelbrot();
-  }
+    <script>
+        const canvas = document.getElementById('canvas');
+        const gl = canvas.getContext('webgl');
 
-  function panStart(event) {
-    dragging = true;
-    dragStartX = event.clientX;
-    dragStartY = event.clientY;
-    event.preventDefault();
-  }
+        if (!gl) {
+            alert('WebGL not supported');
+            throw new Error('WebGL not supported');
+        }
 
-  function panMove(event) {
-    if (!dragging) return;
-    const dx = (event.clientX - dragStartX) / width * (maxX - minX);
-    const dy = (event.clientY - dragStartY) / height * (maxY - minY);
-    minX -= dx;
-    maxX -= dx;
-    minY += dy;
-    maxY += dy;
-    dragStartX = event.clientX;
-    dragStartY = event.clientY;
-    drawMandelbrot();
-    event.preventDefault();
-  }
+        function createShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error('Shader compile error:', gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+                return null;
+            }
+            return shader;
+        }
 
-  function panEnd(event) {
-    dragging = false;
-    event.preventDefault();
-  }
+        function createProgram(gl, vertexShader, fragmentShader) {
+            const program = gl.createProgram();
+            gl.attachShader(program, vertexShader);
+            gl.attachShader(program, fragmentShader);
+            gl.linkProgram(program);
+            if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                console.error('Program link error:', gl.getProgramInfoLog(program));
+                gl.deleteProgram(program);
+                return null;
+            }
+            return program;
+        }
 
-  function animate() {
-    if (colorCycle) {
-      cycleOffset = (cycleOffset + colorSpeed) % maxIter;
-      drawMandelbrot();
-    }
-    requestAnimationFrame(animate);
-  }
+        const vertexShaderSource = document.getElementById('vertexShader').text;
+        const fragmentShaderSource = document.getElementById('fragmentShader').text;
 
-  function updateInfo() {
-    document.getElementById('coords').textContent = `Center: (${((minX + maxX) / 2).toFixed(5)}, ${((minY + maxY) / 2).toFixed(5)})`;
-    document.getElementById('zoomLevel').textContent = `Zoom Level: ${zoomLevel.toFixed(2)}x`;
-  }
+        const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
+        const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
+        const program = createProgram(gl, vertexShader, fragmentShader);
 
-  // Event listeners
-  document.getElementById('palette').addEventListener('change', (e) => {
-    palette = e.target.value;
-    if (palette === 'custom') {
-      document.getElementById('customPaletteInput').style.display = 'block';
-      const inputColors = document.getElementById('customColors').value.trim();
-      if (inputColors) {
-        customColors = parseCustomColors(inputColors);
-      } else {
-        customColors = [];
-      }
-    } else {
-      document.getElementById('customPaletteInput').style.display = 'none';
-    }
-    drawMandelbrot();
-  });
+        const positionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
 
-  document.getElementById('customColors').addEventListener('change', (e) => {
-    const inputColors = e.target.value.trim();
-    if (inputColors) {
-      customColors = parseCustomColors(inputColors);
-    } else {
-      customColors = [];
-    }
-    drawMandelbrot();
-  });
+        const positionAttributeLocation = gl.getAttribLocation(program, 'a_position');
+        gl.enableVertexAttribArray(positionAttributeLocation);
+        gl.vertexAttribPointer(positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
 
-  document.getElementById('smoothColor').addEventListener('change', (e) => {
-    smoothColoring = e.target.checked;
-    drawMandelbrot();
-  });
+        const resolutionUniformLocation = gl.getUniformLocation(program, 'u_resolution');
+        const offsetUniformLocation = gl.getUniformLocation(program, 'u_offset');
+        const zoomUniformLocation = gl.getUniformLocation(program, 'u_zoom');
 
-  document.getElementById('colorCycle').addEventListener('change', (e) => {
-    colorCycle = e.target.checked;
-    if (colorCycle) animate();
-  });
+        let offset = { x: -0.5, y: 0 };
+        let zoom = 3;
 
-  document.getElementById('maxIter').addEventListener('input', (e) => {
-    maxIter = parseInt(e.target.value);
-    document.getElementById('maxIterValue').textContent = maxIter;
-    drawMandelbrot();
-  });
+        function render() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            gl.viewport(0, 0, canvas.width, canvas.height);
 
-  document.getElementById('colorSpeed').addEventListener('input', (e) => {
-    colorSpeed = parseInt(e.target.value);
-    document.getElementById('colorSpeedValue').textContent = colorSpeed;
-  });
+            gl.useProgram(program);
+            gl.uniform2f(resolutionUniformLocation, canvas.width, canvas.height);
+            gl.uniform2f(offsetUniformLocation, offset.x, offset.y);
+            gl.uniform1f(zoomUniformLocation, zoom);
 
-  document.getElementById('renderQuality').addEventListener('input', (e) => {
-    renderQuality = parseInt(e.target.value);
-    document.getElementById('renderQualityValue').textContent = renderQuality;
-    drawMandelbrot();
-  });
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        }
 
-  window.addEventListener('resize', resizeCanvas);
-  canvas.addEventListener('wheel', zoom);
-  canvas.addEventListener('mousedown', panStart);
-  canvas.addEventListener('mousemove', panMove);
-  canvas.addEventListener('mouseup', panEnd);
-  canvas.addEventListener('mouseleave', panEnd);
+        let isDragging = false;
+        let lastMousePosition = { x: 0, y: 0 };
 
-  // Initial setup
-  resizeCanvas();
-})();
-</script>
+        canvas.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            lastMousePosition = { x: e.clientX, y: e.clientY };
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (isDragging) {
+                const dx = e.clientX - lastMousePosition.x;
+                const dy = e.clientY - lastMousePosition.y;
+                offset.x -= dx * zoom / canvas.width;
+                offset.y += dy * zoom / canvas.height;
+                lastMousePosition = { x: e.clientX, y: e.clientY };
+                render();
+            }
+        });
+
+        canvas.addEventListener('mouseup', () => {
+            isDragging = false;
+        });
+
+        canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const zoomFactor = e.deltaY > 0 ? 1.1 : 0.9;
+            const mouseX = e.clientX / canvas.width;
+            const mouseY = 1 - e.clientY / canvas.height;
+            
+            const beforeZoom = {
+                x: offset.x + zoom * (mouseX - 0.5),
+                y: offset.y + zoom * (mouseY - 0.5)
+            };
+
+            zoom *= zoomFactor;
+
+            const afterZoom = {
+                x: offset.x + zoom * (mouseX - 0.5),
+                y: offset.y + zoom * (mouseY - 0.5)
+            };
+
+            offset.x += beforeZoom.x - afterZoom.x;
+            offset.y += beforeZoom.y - afterZoom.y;
+
+            render();
+        });
+
+        window.addEventListener('resize', render);
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'r' || e.key === 'R') {
+                offset = { x: -0.5, y: 0 };
+                zoom = 3;
+                render();
+            }
+        });
+
+        render();
+    </script>
 </body>
 </html>
+
